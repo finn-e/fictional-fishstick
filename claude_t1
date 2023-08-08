@@ -1,0 +1,158 @@
+Hi Claude, could you please write me a script, in python that can go thru a directory tree starting at the current working directory and moving deeper. For every *.php file it finds, extract all of the markup within the "class=container" tags. If there are more than one set of class=container tags, the contents should be concatenated in the order they're found in the file, all wrapped in a single <div class="container {FILENAME}"></div> where filename is the filename of the php file. All of these div containers should be put in one file in the root where the script was ran. These entries should then be loaded into a database via Directus. You should use Directus' GraphQL.
+FO
+
+Here is a Python script to do what you described:
+
+python
+
+Copy code
+import os
+import re
+from pathlib import Path
+import requests
+
+output_file = 'extracted_contents.html'
+
+class_regex = re.compile(r'<div class="container">(.*?)</div>', re.DOTALL) 
+
+def extract_class_contents(filepath):
+    with open(filepath, 'r') as f:
+        file_contents = f.read()
+    
+    matches = class_regex.findall(file_contents)
+    if matches:
+        filename = Path(filepath).name
+        wrapped_matches = f'<div class="container {filename}">' + ''.join(matches) + '</div>'
+        return wrapped_matches
+    else:
+        return ''
+
+def traverse_and_extract(dir_path):
+    contents = ''
+    for root, dirs, files in os.walk(dir_path):
+        for file in files:
+            if file.endswith('.php'):
+                filepath = os.path.join(root, file)
+                extracted = extract_class_contents(filepath)
+                if extracted:
+                    contents += extracted + '\n'
+
+    with open(output_file, 'w') as f:
+        f.write(contents)
+
+def upload_to_directus(filepath):
+    url = 'https://instance.directus.io/graphql'
+    headers = {'Authorization': 'Bearer <token>'}
+
+    with open(filepath, 'r') as f:
+        data = f.read()
+
+    query = '''
+      mutation UploadContent($data: String!) {
+        createOneContentTable(data: {
+          html_content: $data  
+        }) {
+          id
+        }
+      }
+    '''
+
+    variables = {'data': data}
+    
+    response = requests.post(url, json={'query': query, 'variables': variables}, headers=headers)
+
+    if response.status_code == 200:
+        print('Upload succeeded!')
+    else:
+        print('Upload failed!')
+
+if __name__ == '__main__':
+    traverse_and_extract('.')
+    upload_to_directus(output_file)
+
+This traverses the current directory, extracts the class=container contents from PHP files, concatenates and wraps them, saves to a file, and then uploads that file to Directus using their GraphQL API.
+
+The script would need to be customized with the actual Directus instance URL, an authorization token, and the right content schema in Directus. But this should provide a good starting point! Let me know if you have any other questions.
+
+Change the tags that we're looking for to <section id="main-content". Also, the script should put each entry (the content from one php file) into Directus separately. They can be the same statement as long as it creates 1 entry for the contents of 1 file. You should make a list of the php files that didn't have a match.
+FO
+
+Here is an updated version that extracts content from <section id="main-content"> tags, uploads each extracted content as a separate entry to Directus, and logs any .php files that didn't have a match:
+
+python
+
+Copy code
+import os
+import re
+from pathlib import Path
+import requests
+
+no_match = []
+
+main_content_regex = re.compile(r'<section id="main-content">(.*?)</section>', re.DOTALL)
+
+def extract_main_content(filepath):
+    with open(filepath, 'r') as f:
+        file_contents = f.read()
+    
+    match = main_content_regex.search(file_contents)
+    if match:
+        filename = Path(filepath).name
+        content = match.group(1)
+        return filename, content
+    else:
+        no_match.append(filepath)
+        return None, None
+
+def traverse_and_extract(dir_path):
+    extracted = []
+    for root, dirs, files in os.walk(dir_path):
+        for file in files:
+            if file.endswith('.php'):
+                filepath = os.path.join(root, file)
+                filename, content = extract_main_content(filepath)
+                if content:
+                    extracted.append((filename, content))
+
+    return extracted
+
+def upload_to_directus(data):
+    url = 'https://instance.directus.io/graphql'
+    headers = {'Authorization': 'Bearer <token>'}
+
+    mutation = '''
+      mutation UploadContent($filename: String!, $content: String!) {
+        createOneContentTable(data: {
+          filename: $filename
+          html_content: $content
+        }) {
+          id
+        }
+      }
+    '''
+
+    for filename, content in data:
+        variables = {'filename': filename, 'content': content}
+        response = requests.post(url, json={'query': mutation, 'variables': variables}, headers=headers)
+
+        if response.status_code != 200:
+            print(f'Error creating entry for {filename}')
+
+if __name__ == '__main__':
+    extracted = traverse_and_extract('.')
+    upload_to_directus(extracted)
+
+    print('Files with no match:')
+    print(no_match)
+
+The main changes are:
+
+    Updated regex to look for <section id="main-content"> tags
+    Returning filename and content from extract_main_content()
+    Creating a separate Directus entry for each extracted content
+    Logging filenames that don't have a match
+
+Let me know if this meets your needs or if you need any clarification!
+
+
+⏎ to send, shift + ⏎ to add a new line, Ctrl + K to create a new chat
